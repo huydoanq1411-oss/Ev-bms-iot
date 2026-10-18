@@ -28,6 +28,7 @@ h1{margin:0;font:600 2rem/1.05 "Barlow Condensed",sans-serif;letter-spacing:.01e
 .panel{background:linear-gradient(145deg,var(--panel),#0d1d25);border:1px solid var(--line);border-radius:8px;padding:22px;box-shadow:var(--shadow)}
 .banner{display:none;border:1px solid var(--bad);color:var(--bad);border-radius:6px;padding:12px 16px;font-weight:500}
 .banner.show{display:block}
+.early-warning{border-color:var(--warn);color:var(--warn)}
 
 .gauge-top{display:flex;align-items:baseline;gap:16px;flex-wrap:wrap;margin-bottom:12px}
 .soc{font:600 5.5rem/1 "Barlow Condensed",sans-serif;color:var(--ok)}
@@ -94,6 +95,12 @@ canvas{filter:saturate(1.1)}
   </header>
 
   <div id="banner" class="banner" role="alert"></div>
+  <section class="panel" aria-label="Phát hiện bất thường">
+    <h2>Cảnh báo sớm bất thường</h2>
+    <p id="anomalyStatus" role="status">Đang chờ dữ liệu để phân tích xu hướng.</p>
+    <div id="earlyWarning" class="banner early-warning" role="alert"></div>
+    <p class="estimate-note">Ngưỡng mô phỏng: tăng nhiệt ≥ 6 °C/phút, tăng ≥ 0,5 °C trong cửa sổ 5–10 giây, xác nhận 3 mẫu liên tiếp; sụt ≥ 0,3 V khi |dòng| tăng ≥ 2 A giữa hai mẫu cách nhau 0,5–3 giây. Đây là cảnh báo xu hướng có thể liên quan đến thermal runaway (mất kiểm soát nhiệt), không xác nhận hiện tượng này. Cảnh báo sớm chỉ hiển thị; bảo vệ ngắt sạc vẫn do firmware xử lý.</p>
+  </section>
 
   <section class="panel hero" aria-label="Mức pin">
     <div class="hero-copy"><div class="gauge-top"><div class="soc"><span id="soc">--</span><small>%</small></div><div class="state" id="state">Chưa có dữ liệu từ thiết bị</div></div>
@@ -140,6 +147,7 @@ canvas{filter:saturate(1.1)}
 
 <script src="https://cdn.jsdelivr.net/npm/mqtt@5.10.1/dist/mqtt.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+<script src="anomaly.js"></script>
 <script>
 const BASE = "evbms-uth-demo";               // phải trùng TOPIC_BASE trong main.cpp
 const BROKER = "wss://broker.hivemq.com:8884/mqtt";
@@ -219,6 +227,23 @@ $("timeRange").addEventListener("change", () => {
 });
 
 let lastSeen = 0, dragging = false, current = null;
+const anomalyDetector = new AnomalyDetector();
+function resetAnomaly(message) {
+  anomalyDetector.reset();
+  $("anomalyStatus").textContent = message;
+  $("earlyWarning").textContent = "";
+  $("earlyWarning").classList.remove("show");
+}
+function showAnomaly(result) {
+  $("anomalyStatus").textContent = result.invalid ? "Dữ liệu không hợp lệ; đang chờ mẫu mới."
+    : result.ready ? "Tốc độ thay đổi nhiệt độ: " + result.rate.toFixed(1) + " °C/phút."
+    : "Đang thu thập ít nhất 5 giây dữ liệu liên tục để tính tốc độ tăng nhiệt.";
+  const messages = [];
+  if (result.thermal) messages.push("Cảnh báo sớm nguy cơ thermal runaway: nhiệt độ tăng nhanh bất thường (" + result.rate.toFixed(1) + " °C/phút), kể cả khi chưa tới ngưỡng quá nhiệt 45 °C.");
+  if (result.sag) messages.push("Điện áp sụt bất thường " + result.drop.toFixed(2) + " V khi |dòng| tăng " + result.loadStep.toFixed(1) + " A. Cần kiểm tra tải, kết nối và pin; riêng dấu hiệu này không xác nhận thermal runaway.");
+  $("earlyWarning").textContent = messages.join(" ");
+  $("earlyWarning").classList.toggle("show", messages.length > 0);
+}
 
 function formatChargeTime(hours) {
   const minutes = Math.max(1, Math.ceil(hours * 60));
@@ -260,9 +285,13 @@ function setConn(ok) {
   el.classList.toggle("on", ok);
   el.textContent = ok ? "Đã kết nối broker" : "Mất kết nối broker";
   updateChargeEstimate();
+  if (!ok) resetAnomaly("Mất kết nối; tạm dừng phân tích bất thường.");
 }
 
 function handle(d) {
+  const anomaly = anomalyDetector.update(d, performance.now());
+  showAnomaly(anomaly);
+  if (anomaly.invalid) return;
   current = d; lastSeen = Date.now();
   $("conn").textContent = "Thiết bị đang gửi dữ liệu"; $("conn").classList.add("on");
 
@@ -308,7 +337,7 @@ function handle(d) {
   $("deviceState").textContent = d.relay ? "Đang sạc" : (hasFault ? "Đang bảo vệ" : "Sẵn sàng");
 
   const timestamp = lastSeen;
-  const sample = { timestamp, time: timeLabel(timestamp), v: d.v, i: d.i, t: d.t, soc: d.soc, relay: d.relay, fault: d.fault };
+  const sample = { timestamp, time: timeLabel(timestamp), v: d.v, i: d.i, t: d.t, soc: d.soc, relay: d.relay, fault: d.fault, temp_rate_C_min: anomaly.rate, thermal_warning: anomaly.thermal, voltage_sag_warning: anomaly.sag };
   history.push(sample);
   plotHistory.push(sample);
   renderCharts(timestamp);
@@ -325,8 +354,8 @@ $("limit").addEventListener("change", e => {
 
 $("csv").addEventListener("click", () => {
   if (!history.length) return;
-  const rows = ["time,voltage_V,current_A,temp_C,soc_pct,relay,fault"]
-    .concat(history.map(r => [r.time, r.v, r.i, r.t, r.soc, r.relay, r.fault].join(",")));
+  const rows = ["time,voltage_V,current_A,temp_C,soc_pct,relay,fault,temp_rate_C_min,thermal_warning,voltage_sag_warning"]
+    .concat(history.map(r => [r.time, r.v, r.i, r.t, r.soc, r.relay, r.fault, r.temp_rate_C_min, r.thermal_warning, r.voltage_sag_warning].join(",")));
   const a = document.createElement("a");
   a.href = URL.createObjectURL(new Blob([rows.join("\n")], { type: "text/csv" }));
   a.download = "lich-su-pin.csv"; a.click();
@@ -343,6 +372,7 @@ setInterval(() => {
   renderCharts();
   updateChargeEstimate();
   if (lastSeen && Date.now() - lastSeen > 5000) {
+    resetAnomaly("Mất dữ liệu quá 5 giây; chờ lấy lại mốc phân tích.");
     $("conn").textContent = "Thiết bị không gửi dữ liệu"; $("conn").classList.remove("on");
   }
 }, 1000);

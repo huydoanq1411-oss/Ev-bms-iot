@@ -100,3 +100,22 @@ Luồng hoạt động: **biến trở/NTC → ESP32 → MQTT → dashboard**. L
 Dashboard hiển thị gauge vòng tiến độ SOC tới giới hạn sạc và hai đồ thị: SOC/dòng điện, điện áp/nhiệt độ. Mỗi chỉ số có trục và đơn vị riêng; dòng dương là sạc, dòng âm là xả. Có thể bấm chú giải để ẩn/hiện từng đường.
 
 Chọn **Khoảng thời gian xem**: **1 phút**, **5 phút** (mặc định) hoặc **15 phút** để cập nhật cả hai đồ thị. Cửa sổ trượt theo thời gian trên trình duyệt, kể cả khi thiết bị ngừng gửi dữ liệu. Dữ liệu chỉ được thu thập từ lúc mở trang; đổi khoảng xem không tạo thêm dữ liệu quá khứ. CSV chứa toàn bộ mẫu nhận trong phiên, không phụ thuộc bộ lọc. **Xóa biểu đồ** xóa cả dữ liệu đồ thị và lịch sử CSV; tải lại trang cũng xóa lịch sử.
+
+## Phát hiện bất thường và cảnh báo sớm thermal runaway
+
+Dashboard phân tích telemetry bằng `dashboard/anomaly.js`, không cần build lại firmware:
+
+- **Tăng nhiệt nhanh:** ước lượng đạo hàm `dT/dt ≈ (T hiện tại − T đầu cửa sổ) / Δt × 60`, đơn vị °C/phút. Cửa sổ tối đa 10 giây, cần ít nhất 5 giây dữ liệu liên tục; cảnh báo khi tốc độ ≥ 6 °C/phút và mức tăng ≥ 0,5 °C trong 3 mẫu liên tiếp. Nhờ vậy có thể cảnh báo ngay khi nhiệt độ còn dưới ngưỡng quá nhiệt 45 °C. Cảnh báo hết khi điều kiện không còn thỏa.
+- **Sụt áp khi tăng dòng:** so sánh hai mẫu cách nhau 0,5–3 giây, cảnh báo nếu điện áp giảm ≥ 0,3 V và độ lớn dòng tăng ≥ 2 A, không đổi chiều sạc/xả. Dùng |I| vì dòng âm là xả. Cảnh báo giữ 10 giây từ lần phát hiện cuối, trừ khi mất dữ liệu hoặc kết nối.
+- Ngắt kết nối, khoảng trống dữ liệu > 5 giây, thời gian không tăng hoặc mẫu V/I/T không hợp lệ sẽ đặt lại mốc phân tích. Bộ phát hiện dùng đồng hồ đơn điệu của trình duyệt. Xóa biểu đồ không đặt lại bộ phát hiện.
+- Cảnh báo màu vàng xuất hiện riêng với lỗi bảo vệ màu đỏ; có thể hiển thị đồng thời cả hai bất thường. CSV bổ sung tốc độ nhiệt, cờ tăng nhiệt nhanh và cờ sụt áp. Khi chưa đủ dữ liệu, tốc độ nhiệt trong CSV để trống.
+
+Các ngưỡng trên là **heuristic minh họa cho Wokwi**, chưa hiệu chuẩn theo hóa học pin, SOC, tải và cảm biến thực tế. Nhiệt tăng nhanh có thể được trình bày như dấu hiệu cảnh báo sớm nguy cơ **thermal runaway (mất kiểm soát nhiệt)**; phép đo này không xác nhận hay bảo đảm dự báo hiện tượng đó. Sụt áp khi tăng tải cũng có thể là đáp ứng tải thông thường, không đủ để kết luận thermal runaway. Cảnh báo sớm chỉ hoạt động khi dashboard đang mở và nhận dữ liệu; không tự gửi lệnh ngắt sạc. Firmware vẫn ngắt theo các ngưỡng bảo vệ tuyệt đối hiện có.
+
+### Demo và kiểm tra
+
+1. Mở dashboard và Wokwi, giữ nhiệt độ khoảng 30 °C ít nhất 10 giây.
+2. Tăng nhiệt độ NTC khoảng 0,2 °C mỗi giây trong 8–10 giây, giữ dưới 45 °C: kiểm tra tốc độ xấp xỉ 12 °C/phút và cảnh báo sớm màu vàng. Giảm nhiệt để xóa điều kiện cảnh báo.
+3. Giữ dòng dương khoảng 2 A và điện áp khoảng 12 V. Trong một chu kỳ telemetry, tăng dòng lên khoảng 5 A đồng thời hạ điện áp xuống khoảng 11,5 V: xuất hiện cảnh báo sụt áp; giữ ổn định để thấy cảnh báo hết sau 10 giây. Có thể thử tương tự với dòng xả −2 A → −5 A.
+4. Dừng mô phỏng > 5 giây rồi chạy lại: dashboard phải thu thập lại mốc nhiệt, không so sánh qua khoảng mất dữ liệu.
+5. Chạy kiểm thử logic bằng Node.js: `node --test ev-bms-iot/dashboard/anomaly.test.cjs` từ thư mục gốc repository (hoặc `node --test dashboard/anomaly.test.cjs` từ thư mục project).
