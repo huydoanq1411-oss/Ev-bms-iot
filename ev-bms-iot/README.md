@@ -94,3 +94,9 @@ Luồng hoạt động: **biến trở/NTC → ESP32 → MQTT → dashboard**. L
 ## Lưu ý
 - Nếu dây trong `diagram.json` bị lệch, mở file đó trong VS Code và kéo lại dây trực tiếp trên giao diện Wokwi.
 - Chân kết nối: V=GPIO34, I=GPIO35, NTC=GPIO32, LED=GPIO25, còi=GPIO26, relay=GPIO27.
+
+## Gauge và đồ thị nhiều chỉ số
+
+Dashboard hiển thị gauge vòng tiến độ SOC tới giới hạn sạc và hai đồ thị: SOC/dòng điện, điện áp/nhiệt độ. Mỗi chỉ số có trục và đơn vị riêng; dòng dương là sạc, dòng âm là xả. Có thể bấm chú giải để ẩn/hiện từng đường.
+
+Chọn **Khoảng thời gian xem**: **1 phút**, **5 phút** (mặc định) hoặc **15 phút** để cập nhật cả hai đồ thị. Cửa sổ trượt theo thời gian trên trình duyệt, kể cả khi thiết bị ngừng gửi dữ liệu. Dữ liệu chỉ được thu thập từ lúc mở trang; đổi khoảng xem không tạo thêm dữ liệu quá khứ. CSV chứa toàn bộ mẫu nhận trong phiên, không phụ thuộc bộ lọc. **Xóa biểu đồ** xóa cả dữ liệu đồ thị và lịch sử CSV; tải lại trang cũng xóa lịch sử.

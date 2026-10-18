@@ -68,6 +68,9 @@ input[type=number]{width:100%;padding:9px 12px;background:var(--bg);color:var(--
 .estimate-note{color:var(--mute);font-size:.85rem;margin:10px 0 0}
 .estimate-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.estimate-grid .mini b{font-size:1.2rem}
 .chart-wrap{position:relative;height:260px}
+.chart-toolbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:16px}.chart-toolbar label{margin:0}
+.chart-toolbar select{font:inherit;padding:7px 10px;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:4px}
+.chart-note{color:var(--mute);font-size:.85rem;margin:8px 0 18px}
 .actions{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
 .control-status{margin:0 0 16px;color:var(--mute);font-size:.9rem}.control-status b{color:var(--ink)}
 .switch-line{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:14px}.switch-line label{margin:0;color:var(--ink);font-weight:500}
@@ -125,6 +128,10 @@ canvas{filter:saturate(1.1)}
       <div class="actions"><button id="csv" class="ghost">Tải lịch sử CSV</button><button id="clear" class="ghost">Xóa biểu đồ</button></div>
     </section>
     <section class="panel">
+      <div class="chart-toolbar"><label for="timeRange">Khoảng thời gian xem</label><select id="timeRange"><option value="1">1 phút</option><option value="5" selected>5 phút</option><option value="15">15 phút</option></select></div>
+      <h2>SOC và dòng điện theo thời gian</h2>
+      <div class="chart-wrap"><canvas id="socChart" role="img" aria-label="Đồ thị SOC phần trăm và dòng điện ampe theo thời gian"></canvas></div>
+      <p class="chart-note" id="chartNote" aria-live="polite">Chưa có dữ liệu. Lịch sử được thu thập khi mở trang.</p>
       <h2>Điện áp và nhiệt độ theo thời gian</h2>
       <div class="chart-wrap"><canvas id="chart"></canvas></div>
     </section>
@@ -151,24 +158,66 @@ for (let n = 0; n < 20; n++) { const d = document.createElement("div"); d.classN
 const cellEls = [...cellsEl.querySelectorAll(".cell")];
 
 // Biểu đồ
-const MAX_POINTS = 120;
-const chart = new Chart($("chart"), {
-  type: "line",
-  data: { labels: [], datasets: [
-    { label: "Điện áp (V)", data: [], yAxisID: "y", borderColor: "#0b7c7e", pointRadius: 0, tension: .25 },
-    { label: "Nhiệt độ (°C)", data: [], yAxisID: "y1", borderColor: "#c8741c", pointRadius: 0, tension: .25 }
-  ]},
-  options: {
-    animation: false, maintainAspectRatio: false, interaction: { mode: "index", intersect: false },
-    scales: {
-      x: { ticks: { maxTicksLimit: 6 } },
-      y: { position: "left", suggestedMin: 9, suggestedMax: 13, title: { display: true, text: "V" } },
-      y1: { position: "right", suggestedMin: 20, suggestedMax: 60, grid: { drawOnChartArea: false }, title: { display: true, text: "°C" } }
+let windowMinutes = Number($("timeRange").value);
+const history = [];
+// Keep the full session for CSV; only the selected time window is plotted.
+const plotHistory = [];
+const timeLabel = value => new Date(value).toLocaleTimeString("vi-VN");
+function makeChart(id, datasets, axes) {
+  return new Chart($(id), {
+    type: "line",
+    data: { datasets: datasets.map(d => ({ ...d, data: [], pointRadius: 0, tension: 0, borderWidth: 2, spanGaps: false })) },
+    options: {
+      animation: false, parsing: false, maintainAspectRatio: false,
+      interaction: { mode: "index", intersect: false },
+      plugins: {
+        legend: { labels: { color: "#edf8f5" } },
+        tooltip: { callbacks: { title: items => items.length ? timeLabel(items[0].parsed.x) : "" } }
+      },
+      scales: {
+        x: { type: "linear", ticks: { maxTicksLimit: 5, color: "#8ca9aa", callback: timeLabel }, grid: { color: "#23434a" } },
+        ...Object.fromEntries(Object.entries(axes).map(([key, axis]) => [key, {
+          ...axis, ticks: { color: "#8ca9aa" }, grid: { drawOnChartArea: axis.position === "left", color: "#23434a" }
+        }]))
+      }
     }
+  });
+}
+const chart = makeChart("chart", [
+  { label: "Điện áp (V)", key: "v", yAxisID: "y", borderColor: "#59d7b1" },
+  { label: "Nhiệt độ (°C)", key: "t", yAxisID: "y1", borderColor: "#f4b95f" }
+], {
+  y: { position: "left", suggestedMin: 9, suggestedMax: 13, title: { display: true, text: "V", color: "#8ca9aa" } },
+  y1: { position: "right", suggestedMin: 20, suggestedMax: 60, title: { display: true, text: "°C", color: "#8ca9aa" } }
+});
+const socChart = makeChart("socChart", [
+  { label: "SOC (%)", key: "soc", yAxisID: "soc", borderColor: "#59d7b1" },
+  { label: "Dòng điện (A)", key: "i", yAxisID: "current", borderColor: "#76b7ff" }
+], {
+  soc: { position: "left", min: 0, max: 100, title: { display: true, text: "SOC (%)", color: "#8ca9aa" } },
+  current: { position: "right", suggestedMin: -20, suggestedMax: 20, title: { display: true, text: "A (+ sạc / − xả)", color: "#8ca9aa" } }
+});
+function renderCharts(now = Date.now()) {
+  const cutoff = now - windowMinutes * 60000;
+  while (plotHistory.length && plotHistory[0].timestamp < now - 15 * 60000) plotHistory.shift();
+  const visible = plotHistory.filter(r => r.timestamp >= cutoff);
+  for (const plot of [chart, socChart]) {
+    plot.options.scales.x.min = cutoff;
+    plot.options.scales.x.max = now;
+    for (const dataset of plot.data.datasets) {
+      dataset.data = visible.map(r => ({ x: r.timestamp, y: Number.isFinite(r[dataset.key]) ? r[dataset.key] : null }));
+    }
+    plot.update();
   }
+  $("chartNote").textContent = visible.length
+    ? visible.length + " mẫu trong " + windowMinutes + " phút gần nhất. Dòng dương: sạc; dòng âm: xả."
+    : "Chưa có dữ liệu trong khoảng đã chọn. Lịch sử được thu thập khi mở trang.";
+}
+$("timeRange").addEventListener("change", () => {
+  windowMinutes = Number($("timeRange").value);
+  renderCharts();
 });
 
-const history = [];
 let lastSeen = 0, dragging = false, current = null;
 
 function formatChargeTime(hours) {
@@ -258,15 +307,11 @@ function handle(d) {
   tg.checked = d.charge_enabled;
   $("deviceState").textContent = d.relay ? "Đang sạc" : (hasFault ? "Đang bảo vệ" : "Sẵn sàng");
 
-  const time = new Date().toLocaleTimeString("vi-VN");
-  history.push({ time, v: d.v, i: d.i, t: d.t, soc: d.soc, relay: d.relay, fault: d.fault });
-  chart.data.labels.push(time);
-  chart.data.datasets[0].data.push(d.v);
-  chart.data.datasets[1].data.push(d.t);
-  if (chart.data.labels.length > MAX_POINTS) {
-    chart.data.labels.shift(); chart.data.datasets.forEach(s => s.data.shift());
-  }
-  chart.update();
+  const timestamp = lastSeen;
+  const sample = { timestamp, time: timeLabel(timestamp), v: d.v, i: d.i, t: d.t, soc: d.soc, relay: d.relay, fault: d.fault };
+  history.push(sample);
+  plotHistory.push(sample);
+  renderCharts(timestamp);
 }
 
 $("toggle").addEventListener("change", () => {
@@ -289,12 +334,13 @@ $("csv").addEventListener("click", () => {
 
 $("clear").addEventListener("click", () => {
   history.length = 0;
-  chart.data.labels = [];
-  chart.data.datasets.forEach(dataset => { dataset.data = []; });
-  chart.update();
+  plotHistory.length = 0;
+  renderCharts();
 });
 
+renderCharts();
 setInterval(() => {
+  renderCharts();
   updateChargeEstimate();
   if (lastSeen && Date.now() - lastSeen > 5000) {
     $("conn").textContent = "Thiết bị không gửi dữ liệu"; $("conn").classList.remove("on");
