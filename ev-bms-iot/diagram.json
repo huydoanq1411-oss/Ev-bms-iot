@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "author": "EV BMS IoT",
+  "editor": "wokwi",
+  "parts": [
+    { "type": "wokwi-esp32-devkit-v1", "id": "esp", "top": 0, "left": 0, "attrs": {} },
+    { "type": "wokwi-potentiometer", "id": "potV", "top": -110, "left": 260, "attrs": {} },
+    { "type": "wokwi-potentiometer", "id": "potI", "top": 10, "left": 260, "attrs": {} },
+    { "type": "wokwi-ntc-temperature-sensor", "id": "ntc1", "top": 140, "left": 270, "attrs": {} },
+    { "type": "wokwi-relay-module", "id": "relay1", "top": -110, "left": 430, "attrs": {} },
+    { "type": "wokwi-resistor", "id": "r1", "top": 90, "left": 430, "attrs": { "value": "220" } },
+    { "type": "wokwi-led", "id": "led1", "top": 150, "left": 440, "attrs": { "color": "red" } },
+    { "type": "wokwi-buzzer", "id": "bz1", "top": 150, "left": 520, "attrs": { "volume": "0.1" } }
+  ],
+  "connections": [
+    [ "esp:TX0", "$serialMonitor:RX", "", [] ],
+    [ "esp:RX0", "$serialMonitor:TX", "", [] ],
+
+    [ "potV:VCC", "esp:3V3", "red", [] ],
+    [ "potV:GND", "esp:GND.1", "black", [] ],
+    [ "potV:SIG", "esp:D34", "green", [] ],
+
+    [ "potI:VCC", "esp:3V3", "red", [] ],
+    [ "potI:GND", "esp:GND.1", "black", [] ],
+    [ "potI:SIG", "esp:D35", "blue", [] ],
+
+    [ "ntc1:VCC", "esp:3V3", "red", [] ],
+    [ "ntc1:GND", "esp:GND.1", "black", [] ],
+    [ "ntc1:OUT", "esp:D32", "orange", [] ],
+
+    [ "relay1:VCC", "esp:VIN", "red", [] ],
+    [ "relay1:GND", "esp:GND.2", "black", [] ],
+    [ "relay1:IN", "esp:D27", "purple", [] ],
+
+    [ "esp:D25", "r1:1", "gold", [] ],
+    [ "r1:2", "led1:A", "gold", [] ],
+    [ "led1:C", "esp:GND.2", "black", [] ],
+
+    [ "esp:D26", "bz1:2", "gray", [] ],
+    [ "bz1:1", "esp:GND.2", "black", [] ]
+  ],
+  "dependencies": {}
+}
